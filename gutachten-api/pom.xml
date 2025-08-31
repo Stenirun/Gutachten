@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project
+	xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>com.bauerfinanz.gutachten</groupId>
+		<artifactId>gutachten-service</artifactId>
+		<version>0.0.1</version>
+	</parent>
+
+	<artifactId>gutachten-api</artifactId>
+	<name>gutachten-api</name>
+	<description>Stellt alle Gutachten Daten REST API zur Verfügung</description>
+
+	<dependencies>
+
+		<!-- Util -->
+		<dependency>
+			<groupId>com.bauerfinanz.gutachten</groupId>
+			<artifactId>gutachten-util</artifactId>
+		</dependency>
+
+		<!-- API -->
+		<dependency>
+			<groupId>io.quarkus</groupId>
+			<artifactId>quarkus-rest-jackson</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.quarkus</groupId>
+			<artifactId>quarkus-security</artifactId>
+		</dependency>
+
+		<!-- Rest Client -->
+		<dependency>
+			<groupId>io.quarkus</groupId>
+			<artifactId>quarkus-rest-client-jackson</artifactId>
+		</dependency>
+
+		<!-- AWS Lambda -->
+		<dependency>
+			<groupId>io.quarkus</groupId>
+			<artifactId>quarkus-amazon-lambda-http</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>software.amazon.awssdk</groupId>
+					<artifactId>apache-client</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>commons-logging</groupId>
+					<artifactId>commons-logging</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>software.amazon.awssdk</groupId>
+					<artifactId>netty-nio-client</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+	</dependencies>
+
+</project>

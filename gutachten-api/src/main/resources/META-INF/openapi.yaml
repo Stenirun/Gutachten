@@ -1,0 +1,243 @@
+info:
+   title: Gutachten Service API
+   description: Folgende API wird dazu verwendet um Gutachten Daten zu bearbeiten / erstellen.
+   contact:
+      name: Gutachten
+      email: gutachten@bauerfinanz.de
+   license:
+      name: Bauerfinanz Lizenz
+      url: https://bauerfinanz.de
+externalDocs:
+   description: Weitere Informationen zum Gutachten Rechner
+   url: https://bauer-finanz.atlassian.net/wiki/spaces/SOFTWAREEN/overview
+servers:
+-  url: https://api.gutachten-dev.bauerfinanz.de
+   description: AWS Dev Umgebung
+-  url: http://localhost:8080
+   description: Lokale Dev Umgebung
+-  url: https://api.gutachten.bauerfinanz.de
+   description: Produktiv Umgebung
+tags:
+-  name: Benutzer
+   description: Anmeldedaten
+-  name: Kunden
+   description: Kunden Daten
+-  name: Gutachten
+   description: Berechnungen
+-  name: Utility
+   description: Querschnittsfunktionen für Daten
+paths:
+   /customer/{id}:
+      get:
+         tags:
+         - Kunden
+         summary: xxx
+         description: xxx
+         x-permission-id:
+         - Pxx
+         parameters:
+         -  $ref: '#/components/parameters/requestIdHeader'
+         -  $ref: '#/components/parameters/externalIdHeader'
+         responses:
+            '400':
+               $ref: '#/components/responses/BadRequest'
+            '401':
+               $ref: '#/components/responses/NotAuthorized'
+            '403':
+               $ref: '#/components/responses/Forbidden'
+            '404':
+               $ref: '#/components/responses/NotFound'
+            '412':
+               $ref: '#/components/responses/PreconditionFailed'
+            '415':
+               $ref: '#/components/responses/UnsupportedMedia'
+            '500':
+               $ref: '#/components/responses/InternalServerError'
+            default:
+               description: Default Response header values
+               headers:
+                  x-request-id:
+                     $ref: '#/components/headers/x-request-id'
+                  x-external-id:
+                     $ref: '#/components/headers/x-external-id'
+         security:
+         -  SecurityScheme: null
+	 /customer:
+	    get:
+	       tags:
+	       - Kunden
+	       summary: xxx
+	       description: xxx
+	       x-permission-id:
+	       - Pxx
+	       parameters:
+	       -  $ref: '#/components/parameters/requestIdHeader'
+	       -  $ref: '#/components/parameters/externalIdHeader'
+	       responses:
+	          '400':
+	             $ref: '#/components/responses/BadRequest'
+	          '401':
+	             $ref: '#/components/responses/NotAuthorized'
+	          '403':
+	             $ref: '#/components/responses/Forbidden'
+	          '404':
+	             $ref: '#/components/responses/NotFound'
+	          '412':
+	             $ref: '#/components/responses/PreconditionFailed'
+	          '415':
+	             $ref: '#/components/responses/UnsupportedMedia'
+	          '500':
+	             $ref: '#/components/responses/InternalServerError'
+	          default:
+	             description: Default Response header values
+	             headers:
+	                x-request-id:
+	                   $ref: '#/components/headers/x-request-id'
+	                x-external-id:
+	                   $ref: '#/components/headers/x-external-id'
+	       security:
+	       -  SecurityScheme: null
+   /customer:
+      put:
+         tags:
+         - Kunden
+         summary: xxx
+         description: xxx
+         x-permission-id:
+         - Pxx
+         parameters:
+         -  $ref: '#/components/parameters/requestIdHeader'
+         -  $ref: '#/components/parameters/externalIdHeader'
+         responses:
+            '400':
+               $ref: '#/components/responses/BadRequest'
+            '401':
+               $ref: '#/components/responses/NotAuthorized'
+            '403':
+               $ref: '#/components/responses/Forbidden'
+            '404':
+               $ref: '#/components/responses/NotFound'
+            '412':
+               $ref: '#/components/responses/PreconditionFailed'
+            '415':
+               $ref: '#/components/responses/UnsupportedMedia'
+            '500':
+               $ref: '#/components/responses/InternalServerError'
+            default:
+               description: Default Response header values
+               headers:
+                  x-request-id:
+                     $ref: '#/components/headers/x-request-id'
+                  x-external-id:
+                     $ref: '#/components/headers/x-external-id'
+         security:
+         -  SecurityScheme: null
+	 /customer/{id}:
+	    delete:
+	       tags:
+	       - Kunden
+	       summary: xxx
+	       description: xxx
+	       x-permission-id:
+	       - Pxx
+	       parameters:
+	       -  $ref: '#/components/parameters/requestIdHeader'
+	       -  $ref: '#/components/parameters/externalIdHeader'
+	       responses:
+	          '400':
+	             $ref: '#/components/responses/BadRequest'
+	          '401':
+	             $ref: '#/components/responses/NotAuthorized'
+	          '403':
+	             $ref: '#/components/responses/Forbidden'
+	          '404':
+	             $ref: '#/components/responses/NotFound'
+	          '412':
+	             $ref: '#/components/responses/PreconditionFailed'
+	          '415':
+	             $ref: '#/components/responses/UnsupportedMedia'
+	          '500':
+	             $ref: '#/components/responses/InternalServerError'
+	          default:
+	             description: Default Response header values
+	             headers:
+	                x-request-id:
+	                   $ref: '#/components/headers/x-request-id'
+	                x-external-id:
+	                   $ref: '#/components/headers/x-external-id'
+	       security:
+	       -  SecurityScheme: null
+components:
+   securitySchemes:
+      SecurityScheme:
+         type: http
+         description: Authentication
+         scheme: bearer
+         bearerFormat: JWT
+   parameters:
+      requestIdHeader:
+         name: x-request-id
+         in: header
+         schema:
+            type: string
+         required: false
+         description: ID zur Request Nachverfolgung
+      externalIdHeader:
+         in: header
+         name: x-external-id
+         schema:
+            type: string
+         required: false
+         description: ID zur externen Request Nachverfolgung. Wird an den Response durchgereicht
+   headers:
+      x-request-id:
+         schema:
+            type: string
+         description: ID zur Request Nachverfolgung. Wird erzeugt, falls nicht übergeben.
+      x-external-id:
+         schema:
+            type: string
+         description: ID zur externen Request Nachverfolgung. Wird direkt durchgereicht, kann auch null sein.
+   responses:
+      NotFound:
+         description: Daten nicht gefunden
+         content:
+            application/json:
+               schema:
+                  $ref: '#/components/schemas/Error'
+      InternalServerError:
+         description: Interner Verarbeitungsfehler
+         content:
+            application/json:
+               schema:
+                  $ref: '#/components/schemas/Error'
+      PreconditionFailed:
+         description: Systemvorraussetzung nicht erfüllt
+         content:
+            application/json:
+               schema:
+                  $ref: '#/components/schemas/Error'
+      BadRequest:
+         description: Falsche Eingangsparameter übergeben
+         content:
+            application/json:
+               schema:
+                  $ref: '#/components/schemas/Error'
+      NotAuthorized:
+         description: Keine Authentifizeirung zur Ausführung vorhanden
+         content:
+            application/json:
+               schema:
+                  $ref: '#/components/schemas/Error'
+      Forbidden:
+         description: Keine Berechtigung zur Ausführung vorhanden
+         content:
+            application/json:
+               schema:
+                  $ref: '#/components/schemas/Error'
+      UnsupportedMedia:
+         description: Media Type wird nicht unterstützt
+         content:
+            application/json:
+               schema:
+                  $ref: '#/components/schemas/Error'
