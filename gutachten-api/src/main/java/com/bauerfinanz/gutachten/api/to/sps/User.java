@@ -27,7 +27,7 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSecon
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortKey;
 
 /**
- * Complete Status entity.
+ * Gutachten User entity.
  *
  * @author Markus Pichler
  * @version 0.0.1
@@ -40,7 +40,7 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
 @NoArgsConstructor
 @AllArgsConstructor
 @RegisterForReflection
-@Schema(description = "Gutachten Status")
+@Schema(description = "Gutachten Benutzer")
 @DynamoDbBean
 @JsonInclude(value = Include.NON_NULL)
 public class User extends MetaDataSystem implements Comparable<User> {
@@ -48,10 +48,12 @@ public class User extends MetaDataSystem implements Comparable<User> {
 	public static final TableSchema<User> USER_TABLE_SCHEMA = TableSchema.fromClass(User.class);
 
 	@Getter(onMethod_ = { @DynamoDbPartitionKey, @DynamoDbAttribute(value = DBApiConstants.ID_FIELD) })
-	@Schema(description = "Name der Gruppe", required = true)
+	@Schema(description = "Benutzer Id", required = true)
 	private String id;
 
-	@Getter(onMethod_ = { @DynamoDbSortKey, @DynamoDbSecondaryPartitionKey(indexNames = { DBApiConstants.INDEX_TYPE }),
+	@Getter(onMethod_ = { 
+			@DynamoDbSortKey, 
+			@DynamoDbSecondaryPartitionKey(indexNames = { DBApiConstants.INDEX_TYPE }),
 			@DynamoDbAttribute(value = DBApiConstants.TYPE_FIELD) })
 	@JsonIgnore
 	private ApiDBType entity;
@@ -59,8 +61,12 @@ public class User extends MetaDataSystem implements Comparable<User> {
 	@Getter(onMethod_ = { @DynamoDbSecondarySortKey(indexNames = DBApiConstants.INDEX_TYPE),
 			@DynamoDbAttribute(value = DBApiConstants.DATA_FIELD),
 			@DynamoDbConvertedBy(BooleanStringAttributeConverter.class) })
-	@Schema(description = "Online Status", required = true)
-	private Boolean state;
+	@Schema(description = "Benutzer Anmeldename", required = true)
+	private String loginName;
+
+	@Getter(onMethod_ = { @DynamoDbAttribute(value = DBApiConstants.DATA_FIELD) })
+	@Schema(description = "Vorname", required = true)
+	private String VorName;
 
 	@Override
 	public int compareTo(final User o) {

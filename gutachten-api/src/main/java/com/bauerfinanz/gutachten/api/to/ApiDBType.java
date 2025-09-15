@@ -9,6 +9,6 @@ package com.bauerfinanz.gutachten.api.to;
  */
 public enum ApiDBType {
   STATUS,
-  WEBSOCKET,
+  USER,
   ACTION;
 }
