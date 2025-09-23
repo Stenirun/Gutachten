@@ -1,7 +1,6 @@
-# SPARPPLAN- UND MONTE-CARLO-SIMULATOR
-# ==============================================================================
+# Sparplan Simulator
 
-# === IMPORTS ===
+# Imports
 from collections import deque
 from dateutil.relativedelta import relativedelta
 import datetime
@@ -11,7 +10,6 @@ import numpy as np
 import dataclasses
 from typing import List, Dict, Any, Optional
 import pyxirr
-import os
 import warnings
 
 # Unterdrückt RuntimeWarnings und FutureWarnings
@@ -27,9 +25,9 @@ from monte_carlo_simulator import (
     analyze_and_plot_results
 )
 
-# === EINGANGSPARAMETER ALS DATENKLASSE ===
+# Eingangsparameter als Datenklasse
 @dataclasses.dataclass
-class BasisParameter:
+class BasisParameter: #allgemeine Paraeter für alle Simulationen
     eintrittsalter: int
     initial_investment: float
     monthly_investment: float
@@ -57,7 +55,7 @@ class BasisParameter:
 
 
 @dataclasses.dataclass
-class DepotParameter(BasisParameter):
+class DepotParameter(BasisParameter): #spezifische Parameter fürs Depot, erbt von BasisParameter
     ausgabeaufschlag: float = 0.0
     monthly_ausgabeaufschlag: float = 0.0
     ruecknahmeabschlag: float = 0.0
@@ -72,7 +70,7 @@ class DepotParameter(BasisParameter):
 
 
 @dataclasses.dataclass
-class DepotDIYParameter(BasisParameter):
+class DepotDIYParameter(BasisParameter): #spezifische Parameter für DepotDIY, erbt von Basisparameter
     ausgabeaufschlag: float = 0.0
     monthly_ausgabeaufschlag: float = 0.0
     ruecknahmeabschlag: float = 0.0
@@ -87,7 +85,7 @@ class DepotDIYParameter(BasisParameter):
 
 
 @dataclasses.dataclass
-class VersicherungParameter(BasisParameter):
+class VersicherungParameter(BasisParameter): #spezifische Parameter für Versicherungspolice, erbt von Basisparameter
     ter: float = 0.0
     serviceentgelt: float = 0.0
     guthabenkosten: float = 0.0
@@ -100,17 +98,19 @@ class VersicherungParameter(BasisParameter):
     versicherung_modus: bool = True
 
 
-# === SIMULATORKLASSE ===
+# Hauptsimulationsklasse, verwaltet Portfolio monatsweise, berechnet Kosten, Steuern, Entnahmen und verwaltet Wertentwicklung
 class SparplanSimulator:
-    def __init__(self, params: Any, annual_return: float):
+    def __init__(self, params: Any, annual_return: float): #initialisiert Variablen für Simulation
         self.params = params
         self.annual_return = annual_return
-        self.portfolio = deque()
+        self.portfolio = deque() #deque um auf älteste Element zuzugreifen für FIFO
         self.rebalancing_log = []
         self.monatliche_kosten_logs = []
         self.cashflows = []
         self.cashflow_dates = []
         self.real_cashflows = []
+
+        #monatlich kumulierte Kosten und Steuern
         self.ausgabeaufschlag_summe = 0
         self.ruecknahmeabschlag_summe = 0
         self.stueckkosten_summe = 0
@@ -122,6 +122,8 @@ class SparplanSimulator:
         self.kumulierte_entnahmen = 0
         self.total_tax_paid = 0
         self.total_withdrawal_tax_paid = 0
+
+        #reale inflationsbereinigte Werte
         self.ausgabeaufschlag_real_summe = 0
         self.ruecknahmeabschlag_real_summe = 0
         self.stueckkosten_real_summe = 0
@@ -137,6 +139,8 @@ class SparplanSimulator:
         self.monthly_investment = self.params.monthly_investment
         self.abschlusskosten_rest = 0.0
         self.kumulierte_inflation_factor = 1.0
+
+        #generiert monatliche Inflationsraten basierend auf Normalverteilung
         self.monthly_inflation_rates = np.random.normal(
             loc=self.params.inflation_rate / 12,
             scale=self.params.inflation_volatility / np.sqrt(12),
@@ -148,8 +152,6 @@ class SparplanSimulator:
         self.death_triggered = False
         self.verrechnungs_monate_verbleibend = 0
         self.monatliche_abschlusskosten_fix = 0
-        self.death_abschlusskosten_pro_monat = 0
-        self.death_abschlusskosten_remaining_months = 0
 
     def run_simulation(self) -> (pd.DataFrame, List[Dict[str, Any]], List[float], List[datetime.date], List[float]):
         self._initialisiere_simulation()
@@ -159,7 +161,8 @@ class SparplanSimulator:
         df_kosten = pd.DataFrame(self.monatliche_kosten_logs)
         return df_kosten, self.rebalancing_log, self.cashflows, self.cashflow_dates, self.real_cashflows
 
-    def _initialisiere_simulation(self):
+    def _initialisiere_simulation(self): #initiale Kosten der Anfangsinvestition
+        #Abschlusskosten Versicherung
         if self.params.versicherung_modus:
             abschlusskosten_einmalig = self.params.initial_investment * getattr(self.params,
                                                                                 "abschlusskosten_einmalig_prozent", 0.0)
@@ -176,10 +179,12 @@ class SparplanSimulator:
         nettobetrag = self.params.initial_investment - aufschlag
         self.ausgabeaufschlag_summe += aufschlag
         self.ausgabeaufschlag_real_summe += aufschlag / self.kumulierte_inflation_factor
+        #Cashflows für XIRR Berechnung
         self.cashflows.append(-self.params.initial_investment)
         self.real_cashflows.append(-self.params.initial_investment)
         self.cashflow_dates.append(datetime.date(2025, 1, 1))
 
+        #erster Portfolioeintrag
         if nettobetrag > 0:
             self.portfolio.append({
                 "date": datetime.date(2025, 1, 1),
@@ -189,14 +194,16 @@ class SparplanSimulator:
                 "vorabpauschalen_bereits_versteuert": 0.0
             })
 
-    def _simuliere_monat(self, month: int):
+    def _simuliere_monat(self, month: int): #simuliert Abläufe für jeden einzelnen Monat
         current_date = datetime.date(2025, 1, 1) + relativedelta(months=month)
         current_year = current_date.year - 2025
 
+        #überprüft ob Todesfall in dem Jahr eingetreten ist
         if self.params.death_year and current_year == self.params.death_year and not self.death_triggered:
             self._handle_death(current_date)
             self.death_triggered = True
 
+        #Freistellungsauftrag wird zu Beginn jedes Jahres angepasst
         is_january = current_date.month == 1
         if is_january:
             self.freistellungs_topf = self.params.freistellungsauftrag_jahr * (
@@ -205,21 +212,30 @@ class SparplanSimulator:
 
         self._handle_monthly_investment(month, current_date)
 
+        #monatliche Kosten auf Depotwert
         depotwert_brutto = sum(e["value"] for e in self.portfolio)
         self._monatliche_kosten_abziehen(current_date, depotwert_brutto)
 
+        #monatliche Rendite auf den Depotwert
         for entry in self.portfolio:
             entry["value"] *= (1 + self.monthly_return)
 
+        #aktualisiert Inflationsfaktor
         self.kumulierte_inflation_factor *= (1 + self.monthly_inflation_rates[month])
 
+        #führte Steuerberechnung aus
         self._handle_taxes(current_date)
+
+        #führt Umschichtung aus
         self._handle_rebalancing(current_date)
+
+        #führt Entnahmen aus
         self._handle_withdrawals(month, current_date)
 
         depotwert = sum(e["value"] for e in self.portfolio)
         depotwert_real = depotwert / self.kumulierte_inflation_factor
 
+        #Loggt monatliche Kosten und Depotwerte
         self.monatliche_kosten_logs.append({
             "Datum": current_date,
             "Depotwert": depotwert,
@@ -248,11 +264,11 @@ class SparplanSimulator:
             "Kumulierte Entnahmen real": self.kumulierte_entnahmen_real
         })
 
-        if current_date.month == 12:
+        if current_date.month == 12: #speichert Wert zum Jahresende für Vorabpauschalenberechnung im Folgejahr
             for entry in self.portfolio:
                 entry["start_of_prev_year_value"] = entry["value"]
 
-    def _handle_death(self, current_date):
+    def _handle_death(self, current_date): #Simuliert Todesfall im Versicherungsfall, Portfolio wird steuerfrei ausgezahlt und neu investiert
         if not self.params.versicherung_modus or self.death_triggered:
             return
         self.death_triggered = True
@@ -261,7 +277,10 @@ class SparplanSimulator:
         ruecknahmeabschlag = getattr(self.params, "ruecknahmeabschlag", 0.0)
         ruecknahmeabschlag_val = depotwert_brutto * ruecknahmeabschlag
         total_netto_entnahme = depotwert_brutto - ruecknahmeabschlag_val
+        #altes Portfolio wird komplett geleert
         self.portfolio.clear()
+
+        #Netto Betrag wird als neuer Posten wieder hinzufegüt
         if total_netto_entnahme > 0:
             self.portfolio.append({
                 "date": current_date,
@@ -272,9 +291,12 @@ class SparplanSimulator:
             })
         print(f"Kapital nach Auszahlung und Re-Investment: {total_netto_entnahme:,.2f} €")
 
-    def _handle_monthly_investment(self, month, current_date):
+    def _handle_monthly_investment(self, month, current_date): #monatliche und einalige Einzahlungen
+        #Dynamik
         if month > 0 and month % self.params.dynamik_turnus_monate == 0:
             self.monthly_investment *= (1 + self.params.monthly_dynamik_rate)
+
+        #Sonderzahlungen einmalig oder regelmässig
         is_einmalig = month == self.params.sonderzahlung_jahr * 12
         is_regelmaessig = (self.params.regel_sonderzahlung_turnus_jahre > 0 and month > 0 and month % (
                 self.params.regel_sonderzahlung_turnus_jahre * 12) == 0)
@@ -293,6 +315,7 @@ class SparplanSimulator:
                     {"date": current_date, "amount_invested": netto, "value": netto, "start_of_prev_year_value": netto,
                      "vorabpauschalen_bereits_versteuert": 0.0})
 
+        #reguläre monatliche Einazhlungen
         if month < self.params.beitragszahldauer * 12:
             monthly_ausgabeaufschlag = getattr(self.params, "monthly_ausgabeaufschlag", 0.0)
             aufschlag = self.monthly_investment * monthly_ausgabeaufschlag
@@ -306,18 +329,16 @@ class SparplanSimulator:
                 {"date": current_date, "amount_invested": netto, "value": netto, "start_of_prev_year_value": netto,
                  "vorabpauschalen_bereits_versteuert": 0.0})
 
-    def _monatliche_kosten_abziehen(self, current_date, depotwert_brutto):
+    def _monatliche_kosten_abziehen(self, current_date, depotwert_brutto): #berechnet monatliche Kosten und zieht die vom Depotwert ab
         ter_kosten = depotwert_brutto * self.params.ter / 12
         self.ter_summe += ter_kosten
         self.ter_real_summe += ter_kosten / self.kumulierte_inflation_factor
+        #Kosten Versicherung
         if self.params.versicherung_modus:
             abschlusskosten_monatlich = 0
             if self.verrechnungs_monate_verbleibend > 0:
                 abschlusskosten_monatlich = self.monatliche_abschlusskosten_fix
                 self.verrechnungs_monate_verbleibend -= 1
-            if getattr(self, "death_abschlusskosten_remaining_months", 0) > 0:
-                abschlusskosten_monatlich += self.death_abschlusskosten_pro_monat
-                self.death_abschlusskosten_remaining_months -= 1
             verwaltungskosten_monatlich = self.monthly_investment * self.params.verwaltungskosten_monatlich_prozent
             guthabenkosten_monatlich = depotwert_brutto * self.params.guthabenkosten / 12
             serviceentgelt_monatlich = depotwert_brutto * self.params.serviceentgelt / 12
@@ -332,6 +353,7 @@ class SparplanSimulator:
             gesamtkosten_monatlich = (
                     ter_kosten + abschlusskosten_monatlich + verwaltungskosten_monatlich + guthabenkosten_monatlich + serviceentgelt_monatlich
             )
+        #Kosten Depot
         else:
             ausgabeaufschlag_monatlich = self.params.monthly_investment * getattr(self.params, "monthly_ausgabeaufschlag", 0.0)
             stueckkosten_monatlich = getattr(self.params, "stueckkosten", 0.0) / 12
@@ -345,6 +367,7 @@ class SparplanSimulator:
             gesamtkosten_monatlich = (
                     ter_kosten + ausgabeaufschlag_monatlich + stueckkosten_monatlich + serviceentgelt_monatlich
             )
+        #Kosten werden von jedem Posten im portfolio abgezogen
         if depotwert_brutto > 1e-9:
             anteil_kosten = gesamtkosten_monatlich / depotwert_brutto
             for entry in self.portfolio:
@@ -353,7 +376,7 @@ class SparplanSimulator:
             gesamtkosten_monatlich = 0.0
         return depotwert_brutto - gesamtkosten_monatlich
 
-    def _finalisiere_simulation(self):
+    def _finalisiere_simulation(self): #Berechnung am Ende der Laufzeit für Besteuerung
         depotwert_final = sum(e["value"] for e in self.portfolio)
         depotwert_final_real = depotwert_final / self.kumulierte_inflation_factor
         restwert = depotwert_final
@@ -362,6 +385,7 @@ class SparplanSimulator:
         steuer = 0
         ruecknahmeabschlag_val = 0.0
         if restwert > 1e-9 and gewinn > 0 and not self.death_triggered:
+            #Besteuerung Versicherung mit Halbeinkünfteverfahren
             if self.params.versicherung_modus:
                 aktuelle_laufzeit = self.params.laufzeit
                 aktuelle_alter = self.params.eintrittsalter + aktuelle_laufzeit
@@ -369,6 +393,7 @@ class SparplanSimulator:
                     steuer = gewinn * 0.5 * self.params.persoenlicher_steuersatz
                 else:
                     steuer = gewinn * 0.85 * self.params.persoenlicher_steuersatz
+            #Besteuerung Depot mit Teilfreistellung/Freistellungsauftrag
             else:
                 teilfreistellung = getattr(self.params, "teilfreistellung", 0.0)
                 steuerbar = gewinn * (1 - teilfreistellung)
@@ -377,7 +402,6 @@ class SparplanSimulator:
                 steuerfreibetrag_used = min(self.freistellungs_topf, steuerbar)
                 self.freistellungs_topf -= steuerfreibetrag_used
                 zu_versteuern = max(0, steuerbar - steuerfreibetrag_used)
-                # Korrigierte Zeile: Verwendet self.full_tax_rate anstelle von self.params.full_tax_rate
                 steuer = zu_versteuern * self.full_tax_rate
             self.total_tax_paid += steuer
             self.total_tax_paid_real += steuer / self.kumulierte_inflation_factor
@@ -389,11 +413,15 @@ class SparplanSimulator:
             self.ruecknahmeabschlag_summe += ruecknahmeabschlag_val
             self.ruecknahmeabschlag_real_summe += ruecknahmeabschlag_val / self.kumulierte_inflation_factor
         restwert_net = restwert - steuer - ruecknahmeabschlag_val
+
+        #Finaler Auszahlungsbetrag zu Cashflow für Renditeberechnung
         self.cashflows.append(restwert_net)
         self.real_cashflows.append(restwert_net / self.kumulierte_inflation_factor)
         self.cashflow_dates.append(datetime.date(2025, 1, 1) + relativedelta(months=self.params.laufzeit * 12))
         self.kumulierte_entnahmen += restwert_net
         self.kumulierte_entnahmen_real += restwert_net / self.kumulierte_inflation_factor
+
+        #Letzter Log Eintrag für finalen Zustand
         self.monatliche_kosten_logs.append({
             "Datum": datetime.date(2025, 1, 1) + relativedelta(months=self.params.laufzeit * 12),
             "Depotwert": depotwert_final,
@@ -422,7 +450,7 @@ class SparplanSimulator:
             "Kumulierte Entnahmen real": self.kumulierte_entnahmen_real
         })
 
-    def _handle_taxes(self, current_date):
+    def _handle_taxes(self, current_date): #Vorabpauschale für Depot
         is_january = current_date.month == 1
         teilfreistellung = getattr(self.params, "teilfreistellung", 0.0)
         basiszins = getattr(self.params, "basiszins", 0.0)
@@ -433,17 +461,20 @@ class SparplanSimulator:
                 real_ertrag = entry["value"] - start_value
                 steuerbarer_ertrag = min(fiktiver_ertrag, real_ertrag)
                 zu_versteuern_temp = steuerbarer_ertrag * (1 - teilfreistellung)
+                #Freistellungsauftrag, falls noch was vorhanden
                 steuerfreibetrag_used = min(self.freistellungs_topf, max(0, zu_versteuern_temp))
                 self.freistellungs_topf -= steuerfreibetrag_used
                 zu_versteuern = max(0, zu_versteuern_temp - steuerfreibetrag_used)
                 steuer = zu_versteuern * self.full_tax_rate
+
                 if steuer > 0:
                     entry["value"] -= steuer
                     self.total_tax_paid += steuer
                     self.total_tax_paid_real += steuer / self.kumulierte_inflation_factor
+                    #bereits versteuerte Vorabpauschale wird gespeichert, um bei späteren Verkauf nicht doppelt zu versteuern
                     entry["vorabpauschalen_bereits_versteuert"] += zu_versteuern
 
-    def _handle_rebalancing(self, current_date):
+    def _handle_rebalancing(self, current_date): #Rebalancing am Jahresende
         rebalancing_rate = getattr(self.params, "rebalancing_rate", 0.0)
         ruecknahmeabschlag = getattr(self.params, "ruecknahmeabschlag", 0.0)
         teilfreistellung = getattr(self.params, "teilfreistellung", 0.0)
@@ -456,13 +487,19 @@ class SparplanSimulator:
                 total_verkauf = 0.0
                 total_steuer = 0.0
                 total_netto = 0.0
+
+                #Verkauft älteste Posten zuerst nach FIFO
                 while remaining > 1e-9 and self.portfolio:
                     entry = self.portfolio.popleft()
-                    if entry["value"] <= 0: continue
+                    if entry["value"] <= 0:
+                        continue
+
                     sell_value = min(entry["value"], remaining)
                     prop = sell_value / entry["value"]
                     cost_basis = entry["amount_invested"] * prop
                     gain = sell_value - cost_basis
+
+                    #Steuer auf Gewinn bei Umschichtung
                     steuerbarer_gewinn = gain * (1 - teilfreistellung)
                     vorab_used = min(entry.get("vorabpauschalen_bereits_versteuert", 0.0) * prop, steuerbarer_gewinn)
                     steuerbarer_gewinn_nach_vp = max(0.0, steuerbarer_gewinn - vorab_used)
@@ -479,6 +516,8 @@ class SparplanSimulator:
                     total_verkauf += sell_value
                     total_steuer += steuer
                     total_netto += netto_reinvest
+
+                    #Depotwert wird um Umschichtung reduziert
                     entry["value"] -= sell_value
                     entry["amount_invested"] -= cost_basis
                     entry["vorabpauschalen_bereits_versteuert"] = max(0.0,
@@ -488,19 +527,24 @@ class SparplanSimulator:
                         temp_queue.append(entry)
                     remaining -= sell_value
                 self.portfolio = deque(list(temp_queue) + list(self.portfolio))
+                #Nettobetrag wird als neuer Posten im Portfolio angelegt
                 if total_netto > 1e-9:
                     self.portfolio.append({"date": current_date, "amount_invested": total_netto, "value": total_netto,
                                            "start_of_prev_year_value": total_netto,
                                            "vorabpauschalen_bereits_versteuert": 0.0})
+                #Loggt Rebalancing für Überprüfung ob Vorabpauschale / FIFO korrekt
                 self.rebalancing_log.append(
                     {"Datum": current_date, "Bruttoverkauf": total_verkauf, "Steuer": total_steuer,
                      "Netto reinvestiert": total_netto})
 
-    def _handle_withdrawals(self, month, current_date):
+    def _handle_withdrawals(self, month, current_date): #monatliche oder Jährliche Entnahmen
+        #Entnahmen beginnen nach Beitragszahldauer
         if month < self.params.beitragszahldauer * 12:
             return
         depotwert = sum(e["value"] for e in self.portfolio)
         entnahmebetrag_jahr = 0
+
+        #bestimmt Entnahmebetrag aus Entnahmeplan
         withdrawal_year = (current_date.year - datetime.date(2025, 1, 1).year) - self.params.beitragszahldauer + 1
         if self.params.entnahme_plan:
             sorted_years = sorted(self.params.entnahme_plan.keys(), reverse=True)
@@ -523,6 +567,8 @@ class SparplanSimulator:
         netto_entnahme_summe = 0
         total_withdrawal_tax_this_year = 0
         temp_queue = deque()
+
+        #Verkauft älteste Tranchen nach FIFO zuerst für Entnahme
         while remaining_to_withdraw > 1e-9 and self.portfolio:
             oldest_entry = self.portfolio.popleft()
             if oldest_entry["value"] <= 0: continue
@@ -531,14 +577,14 @@ class SparplanSimulator:
             gewinn_anteil = (oldest_entry["value"] - oldest_entry["amount_invested"]) * anteil
             investiert_anteil = oldest_entry["amount_invested"] * anteil
             steuer = 0
-            if self.params.versicherung_modus:
+            if self.params.versicherung_modus: #Besteuerung bei Entnahme Versicherung
                 aktuelle_laufzeit = (current_date - oldest_entry["date"]).days / 365.25
                 aktuelle_alter = self.params.eintrittsalter + (current_date - datetime.date(2025, 1, 1)).days / 365.25
                 if aktuelle_alter >= 62 and aktuelle_laufzeit >= 12:
                     steuer = gewinn_anteil * 0.5 * self.params.persoenlicher_steuersatz
                 else:
                     steuer = gewinn_anteil * 0.85 * self.params.persoenlicher_steuersatz
-            else:
+            else: #Besteuerung bei Entnahme Depot
                 vorabpauschalen_anteil = oldest_entry["vorabpauschalen_bereits_versteuert"] * anteil
                 teilfreistellung = getattr(self.params, "teilfreistellung", 0.0)
                 steuerbarer_gewinn = gewinn_anteil * (1 - teilfreistellung)
@@ -568,14 +614,15 @@ class SparplanSimulator:
                                                       entnahmebetrag_effektiv * ruecknahmeabschlag) / self.kumulierte_inflation_factor
         self.kumulierte_entnahmen += netto_entnahme_summe
         self.kumulierte_entnahmen_real += netto_entnahme_summe / self.kumulierte_inflation_factor
+        #Nettoentnahme als Cashflow
         self.cashflows.append(netto_entnahme_summe)
         self.real_cashflows.append(netto_entnahme_summe / self.kumulierte_inflation_factor)
         self.cashflow_dates.append(current_date)
 
 
-# === HILFSFUNKTIONEN FÜR PLOTS UND AUSWERTUNG ===
+# Hilfsfunktionen für Analyse
 
-def berechne_xirr_und_print(cashflows, cashflow_dates, real_cashflows, label):
+def berechne_xirr_und_print(cashflows, cashflow_dates, real_cashflows, label): #berechnet effektive jährliche Nettorendite XIRR für nominal und reale Cashflows
     try:
         xirr_nominal = pyxirr.xirr(cashflow_dates, cashflows)
         xirr_real = pyxirr.xirr(cashflow_dates, real_cashflows)
@@ -586,8 +633,7 @@ def berechne_xirr_und_print(cashflows, cashflow_dates, real_cashflows, label):
         print(f"Fehler bei der XIRR-Berechnung für {label}: {e}")
         return 0, 0
 
-
-def auswerten_kosten(df_monatlich: pd.DataFrame, params: Any, label: str) -> pd.DataFrame:
+def auswerten_kosten(df_monatlich: pd.DataFrame, params: Any, label: str) -> pd.DataFrame: #gruppiert monatliche Kosten nach Jahr und Kostenart
     df_monatlich["Jahr"] = pd.to_datetime(df_monatlich["Datum"]).dt.year
     df_jaehrlich = df_monatlich.groupby("Jahr").last().reset_index()
     df_jaehrlich["Kosten_Kapitalanlage_nominal"] = df_jaehrlich["Gesamtfondkosten kum"]
@@ -620,7 +666,7 @@ def auswerten_kosten(df_monatlich: pd.DataFrame, params: Any, label: str) -> pd.
     return df_jaehrlich
 
 
-def plotten_kosten(df_kosten_jaehrlich, params):
+def plotten_kosten(df_kosten_jaehrlich, params): #Diagramm für kumulierte Kosten pro Jahr
     if params.versicherung_modus:
         kosten_spalten = [
             "Abschlusskosten kum",
@@ -705,7 +751,7 @@ def plotten_kosten(df_kosten_jaehrlich, params):
     plt.close()
 
 
-def plotten_entnahmen(df_kosten_jaehrlich, params):
+def plotten_entnahmen(df_kosten_jaehrlich, params): #Diagramm für kumulierte Entnahmen
     plt.figure(figsize=(14, 8))
     plt.plot(df_kosten_jaehrlich["Jahr"], df_kosten_jaehrlich["Kumulierte Entnahmen"], label="Kumulierte Entnahmen",
              linewidth=2)
@@ -718,8 +764,7 @@ def plotten_entnahmen(df_kosten_jaehrlich, params):
     plt.savefig(f"{params.label}_entnahmen_aufschluesselung.png")
     plt.close()
 
-
-def exportiere_rebalancing_daten(rebalancing_log, label):
+def exportiere_rebalancing_daten(rebalancing_log, label): #Export Rebalancing Daten in CSV um FIFO/Vorabsteuer zu kontrollieren
     if rebalancing_log:
         df_rebal = pd.DataFrame(rebalancing_log)
         df_rebal.to_csv(f"{label}_Rebalancing.csv", index=False)
@@ -727,15 +772,15 @@ def exportiere_rebalancing_daten(rebalancing_log, label):
     return None
 
 
-def erzeuge_report(df_kosten_det, df_rebal, xirr_nominal, xirr_real, mc_results, params, market_params):
+def erzeuge_report(df_kosten_det, df_rebal, xirr_nominal, xirr_real, mc_results, params, market_params): #erzeugt Report mit allen wichtigen Ergebnissen und Diagrammen
     xirr_nominal_formatted = f"{xirr_nominal:.2%}" if xirr_nominal is not None else "Berechnung fehlgeschlagen"
     xirr_real_formatted = f"{xirr_real:.2%}" if xirr_real is not None else "Berechnung fehlgeschlagen"
-    end_beitragsdauer_index = min(params.beitragszahldauer * 12 - 1, len(df_kosten_det) - 1)
+    end_beitragsdauer_index = min(params.beitragszahldauer - 1, len(df_kosten_det) - 1)
     depotwert_ende_beitrags = df_kosten_det['Depotwert'].iloc[end_beitragsdauer_index]
     depotwert_ende_beitrags_real = df_kosten_det['Depotwert real'].iloc[end_beitragsdauer_index]
     report_text = f"""
 # Report für {params.label}
----
+--- 
 ## Eingabeparameter
 * **Eintrittsalter:** {params.eintrittsalter}
 * **Laufzeit:** {params.laufzeit} Jahre
@@ -776,7 +821,7 @@ def erzeuge_report(df_kosten_det, df_rebal, xirr_nominal, xirr_real, mc_results,
     print(f"Report für '{params.label}' in '{md_filename}' erstellt.")
 
 
-def plotten_vergleich(df_list, params_list):
+def plotten_vergleich(df_list, params_list): #Diagramm zum Vergleich Depotentwicklung in allen Szenarien
     plt.figure(figsize=(14, 8))
     for df, params in zip(df_list, params_list):
         df["Jahr"] = pd.to_datetime(df["Datum"]).dt.year
@@ -793,7 +838,7 @@ def plotten_vergleich(df_list, params_list):
     plt.savefig("vergleich_depotentwicklung.png")
     plt.close()
 
-# === HAUPTPROGRAMM ===
+# Hauptprogramm
 def run_all_scenarios():
     import os
     output_path = "output/"
@@ -802,24 +847,25 @@ def run_all_scenarios():
 
     all_scenarios = []
 
+    #Definition Basisparameter für alle Szenarien
     basis_params = {
         "eintrittsalter": 35,
-        "initial_investment": 150000,
-        "monthly_investment": 500,
-        "laufzeit": 27,
-        "beitragszahldauer": 27,
+        "initial_investment": 10000,
+        "monthly_investment": 400,
+        "laufzeit": 50,
+        "beitragszahldauer": 30,
         "monthly_dynamik_rate": 0.00,
         "dynamik_turnus_monate": 12,
         "sonderzahlung_jahr": 0,
         "sonderzahlung_betrag": 0,
         "regel_sonderzahlung_betrag": 0,
         "regel_sonderzahlung_turnus_jahre": 0,
-        "annual_withdrawal": 0,
+        "annual_withdrawal": 20000,
         "entnahme_plan": {},
         "entnahme_modus": "jährlich",
         "abgeltungssteuer_rate": 0.25,
         "soli_zuschlag_on_abgeltungssteuer": 0.055,
-        "kirchensteuer_on_abgeltungssteuer": 0.0,
+        "kirchensteuer_on_abgeltungssteuer": 0.09,
         "persoenlicher_steuersatz": 0.3,
         "freistellungsauftrag_jahr": 0,
         "inflation_rate": 0.02,
@@ -827,6 +873,7 @@ def run_all_scenarios():
         "freistellungs_pauschbetrag_anpassung_rate": 0.02
     }
 
+    #Annahmen für Marktentwicklung
     market_params = {
         "annual_return": 0.06,
         "annual_volatility": 0.15,
@@ -835,10 +882,11 @@ def run_all_scenarios():
         "price_column": "price"
     }
 
+    #Definition spezifischer Parameter für Depot/Versihcerung
     params_depot = DepotParameter(
         **basis_params,
         label="Depot",
-        ausgabeaufschlag=0.002,
+        ausgabeaufschlag=0.00,
         monthly_ausgabeaufschlag=0.002,
         ruecknahmeabschlag=0.002,
         ter=0.0045,
@@ -846,7 +894,7 @@ def run_all_scenarios():
         stueckkosten=45,
         teilfreistellung=0.3,
         basiszins=0.0255,
-        rebalancing_rate=0.3,
+        rebalancing_rate=0.2,
     )
     all_scenarios.append(params_depot)
 
@@ -860,41 +908,40 @@ def run_all_scenarios():
         abschlusskosten_monatlich_prozent=0.0252,
         verrechnungsdauer_monate=60,
         verwaltungskosten_monatlich_prozent=0.09,
-        bewertungsdauer=22,
-        death_year=20
+        bewertungsdauer=35,
+        death_year={}
     )
     all_scenarios.append(params_versicherung)
 
     params_depot_diy = DepotDIYParameter(
         **basis_params,
         label="Depot DIY",
-        ausgabeaufschlag=0.01,
-        monthly_ausgabeaufschlag=0.01,
-        ruecknahmeabschlag=0.01,
-        ter=0.005,
+        ausgabeaufschlag=0.00,
+        monthly_ausgabeaufschlag=0.0035,
+        ruecknahmeabschlag=0.0035,
+        ter=0.018,
         serviceentgelt=0.0,
-        stueckkosten=10.0,
+        stueckkosten=0.0,
         teilfreistellung=0.3,
         basiszins=0.0255,
-        rebalancing_rate=0.1,
+        rebalancing_rate=0.2,
     )
     all_scenarios.append(params_depot_diy)
 
     df_results_all = []
 
     try:
-        # Lade und analysiere historische Daten
+        # Lade und analysiere historische Daten für Monte Carlo Sim
         monthly_returns_hist, mean_monthly_return, std_dev_monthly_return = load_and_analyze_data(
             market_params["csv_file"],
             market_params["date_column"],
             market_params["price_column"],
             basis_params["inflation_rate"]
         )
-
         for params in all_scenarios:
             print(f"\n--- Simulation für {params.label} gestartet ---")
 
-            # 1. Deterministische Simulation ausführen
+            # 1. Deterministische Simulation ausführen mit fester Rendite
             simulator = SparplanSimulator(params, annual_return=market_params["annual_return"])
             df_monatlich_log, rebalancing_log, cashflows, cashflow_dates, real_cashflows = simulator.run_simulation()
 
@@ -905,9 +952,9 @@ def run_all_scenarios():
             rebal_df = exportiere_rebalancing_daten(rebalancing_log, params.label)
             plotten_kosten(df_kosten_jaehrlich, params)
             plotten_entnahmen(df_kosten_jaehrlich, params)
-
+            '''
             # 3. Monte-Carlo-Simulation (Normal-Szenario) ausführen und analysieren
-            num_simulations_normal = 5000
+            num_simulations_normal = 1
             mc_results_normal, final_values_normal, annual_returns_normal, max_drawdowns_normal = run_monte_carlo_simulation(
                 mean_monthly_return,
                 std_dev_monthly_return,
@@ -933,12 +980,12 @@ def run_all_scenarios():
             analyze_and_plot_results(
                 mc_results_normal, final_values_normal, annual_returns_normal, max_drawdowns_normal,
                 f"Normales Szenario: {params.label}", params.laufzeit, params.initial_investment, num_simulations_normal
-            )
+            )'''
             print(f"--- Simulation für {params.label} beendet ---")
 
         # Vergleichsplots für alle Szenarien
         plotten_vergleich(df_results_all, all_scenarios)
-
+        '''
         # === ERWEITERTE WORST-CASE-ANALYSE FÜR ALLE SZENARIEN ===
         print("\n=== Erweiterte Monte-Carlo-Szenarien ===")
 
@@ -949,7 +996,7 @@ def run_all_scenarios():
             f"Der historisch schlechteste 3-Jahres-Zeitraum war {worst_historical_start_year}-{worst_historical_start_year + 2} mit einer kumulierten Rendite von {worst_historical_return:.2%}.")
         print("-" * 50)
 
-        num_simulations_worst_case = 5000
+        num_simulations_worst_case = 1
 
         for params in all_scenarios:
             print(f"\n--- Worst-Case-Analyse für {params.label} gestartet ---")
@@ -1041,13 +1088,20 @@ def run_all_scenarios():
             )
 
             print(f"--- Worst-Case-Analyse für {params.label} beendet ---")
-
+        '''
     except FileNotFoundError as e:
         print(
             f"Fehler: {e}. Bitte stellen Sie sicher, dass die Datei '{market_params['csv_file']}' im selben Verzeichnis liegt.")
     except Exception as e:
         print(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
 
-
 if __name__ == "__main__":
     run_all_scenarios()
+'''
+#meresults die montecarlo sim rechnet ohne entnahmen sondern einzahlung über komplette laufzeit
+#Report erste seite eingabeparameter wie bei gutachten
+# Eingabeparameter auch die Initialeinzahlung und entnahme und entnahmezeitpunkt, montecarlo mit zeitpunkten da rein und worst case
+#rebalancing muss nicht rein in den report
+inflation könnte aus historischen daten simuliert werden und nicht 2% mit volatilität
+startdatum als eingangsvariable und nicht als magische zahl
+'''
