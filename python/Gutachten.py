@@ -187,16 +187,16 @@ class SparplanSimulator:
                 "vorabpauschalen_bereits_versteuert": 0.0
             })
 
-    def _simuliere_monat(self, month: int): #simuliert Abläufe für jeden einzelnen Monat
+    def _simuliere_monat(self, month: int):  # simuliert Abläufe für jeden einzelnen Monat
         current_date = self.start_date + relativedelta(months=month)
         current_year = current_date.year - self.start_date.year
 
-        #überprüft ob Todesfall in dem Jahr eingetreten ist
+        # überprüft ob Todesfall in dem Jahr eingetreten ist
         if self.params.death_year and current_year == self.params.death_year and not self.death_triggered:
             self._handle_death(current_date)
             self.death_triggered = True
 
-        #Freistellungsauftrag wird zu Beginn jedes Jahres angepasst
+        # Freistellungsauftrag wird zu Beginn jedes Jahres angepasst
         is_january = current_date.month == 1
         if is_january:
             self.freistellungs_topf = self.params.freistellungsauftrag_jahr * (
@@ -205,30 +205,30 @@ class SparplanSimulator:
 
         self._handle_monthly_investment(month, current_date)
 
-        #monatliche Kosten auf Depotwert
+        # monatliche Kosten auf Depotwert
         depotwert_brutto = sum(e["value"] for e in self.portfolio)
-        self._monatliche_kosten_abziehen(current_date, depotwert_brutto)
+        self._monatliche_kosten_abziehen(current_date, depotwert_brutto, month)
 
-        #monatliche Rendite auf den Depotwert
+        # monatliche Rendite auf den Depotwert
         for entry in self.portfolio:
             entry["value"] *= (1 + self.monthly_return)
 
-        #aktualisiert Inflationsfaktor
+        # aktualisiert Inflationsfaktor
         self.kumulierte_inflation_factor *= (1 + self.monthly_inflation_rates[month])
 
-        #führte Steuerberechnung aus
+        # führte Steuerberechnung aus
         self._handle_taxes(current_date)
 
-        #führt Umschichtung aus
+        # führt Umschichtung aus
         self._handle_rebalancing(current_date)
 
-        #führt Entnahmen aus
+        # führt Entnahmen aus
         self._handle_withdrawals(month, current_date)
 
         depotwert = sum(e["value"] for e in self.portfolio)
         depotwert_real = depotwert / self.kumulierte_inflation_factor
 
-        #Loggt monatliche Kosten und Depotwerte
+        # Loggt monatliche Kosten und Depotwerte
         self.monatliche_kosten_logs.append({
             "Datum": current_date,
             "Depotwert": depotwert,
@@ -257,7 +257,7 @@ class SparplanSimulator:
             "Kumulierte Entnahmen real": self.kumulierte_entnahmen_real
         })
 
-        if current_date.month == 12: #speichert Wert zum Jahresende für Vorabpauschalenberechnung im Folgejahr
+        if current_date.month == 12:  # speichert Wert zum Jahresende für Vorabpauschalenberechnung im Folgejahr
             for entry in self.portfolio:
                 entry["start_of_prev_year_value"] = entry["value"]
 
@@ -322,17 +322,29 @@ class SparplanSimulator:
                 {"date": current_date, "amount_invested": netto, "value": netto, "start_of_prev_year_value": netto,
                  "vorabpauschalen_bereits_versteuert": 0.0})
 
-    def _monatliche_kosten_abziehen(self, current_date, depotwert_brutto): #berechnet monatliche Kosten und zieht die vom Depotwert ab
+    def _monatliche_kosten_abziehen(self, current_date, depotwert_brutto,
+                                    month):  # berechnet monatliche Kosten und zieht die vom Depot ab
+
+        if depotwert_brutto <= 1e-9:
+            return 0.0
+
         ter_kosten = depotwert_brutto * self.params.ter / 12
         self.ter_summe += ter_kosten
         self.ter_real_summe += ter_kosten / self.kumulierte_inflation_factor
-        #Kosten Versicherung
+
+        monatlicher_index = month + 1
+
+        # Kosten Versicherung
         if self.params.versicherung_modus:
             abschlusskosten_monatlich = 0
             if self.verrechnungs_monate_verbleibend > 0:
                 abschlusskosten_monatlich = self.monatliche_abschlusskosten_fix
                 self.verrechnungs_monate_verbleibend -= 1
-            verwaltungskosten_monatlich = self.monthly_investment * self.params.verwaltungskosten_monatlich_prozent
+
+            verwaltungskosten_monatlich = 0.0
+            if monatlicher_index <= self.params.beitragszahldauer * 12:
+                verwaltungskosten_monatlich = self.monthly_investment * self.params.verwaltungskosten_monatlich_prozent
+
             guthabenkosten_monatlich = depotwert_brutto * self.params.guthabenkosten / 12
             serviceentgelt_monatlich = depotwert_brutto * self.params.serviceentgelt / 12
             self.abschlusskosten_summe += abschlusskosten_monatlich
@@ -346,9 +358,14 @@ class SparplanSimulator:
             gesamtkosten_monatlich = (
                     ter_kosten + abschlusskosten_monatlich + verwaltungskosten_monatlich + guthabenkosten_monatlich + serviceentgelt_monatlich
             )
-        #Kosten Depot
+        # Kosten Depot
         else:
-            ausgabeaufschlag_monatlich = self.params.monthly_investment * getattr(self.params, "monthly_ausgabeaufschlag", 0.0)
+            ausgabeaufschlag_monatlich = 0.0
+            # Kosten fallen nur an, wenn noch Beiträge gezahlt werden
+            if monatlicher_index <= self.params.beitragszahldauer * 12:
+                ausgabeaufschlag_monatlich = self.params.monthly_investment * getattr(self.params,
+                                                                                      "monthly_ausgabeaufschlag", 0.0)
+
             stueckkosten_monatlich = getattr(self.params, "stueckkosten", 0.0) / 12
             serviceentgelt_monatlich = depotwert_brutto * self.params.serviceentgelt / 12
             self.ausgabeaufschlag_summe += ausgabeaufschlag_monatlich
@@ -360,7 +377,8 @@ class SparplanSimulator:
             gesamtkosten_monatlich = (
                     ter_kosten + ausgabeaufschlag_monatlich + stueckkosten_monatlich + serviceentgelt_monatlich
             )
-        #Kosten werden von jedem Posten im portfolio abgezogen
+
+        # Kosten werden von jedem Posten im portfolio abgezogen
         if depotwert_brutto > 1e-9:
             anteil_kosten = gesamtkosten_monatlich / depotwert_brutto
             for entry in self.portfolio:
@@ -833,34 +851,34 @@ def run_all_scenarios():
 
     #Definition Basisparameter für alle Szenarien
     basis_params = {
-        "eintrittsalter": 45,
-        "initial_investment": 0,
+        "eintrittsalter": 35,
+        "initial_investment": 170000,
         "monthly_investment": 500,
-        "laufzeit": 40,
-        "beitragszahldauer": 22,
+        "laufzeit": 45,
+        "beitragszahldauer": 20,
         "monthly_dynamik_rate": 0.00,
         "dynamik_turnus_monate": 12,
-        "sonderzahlung_jahr": 2,
-        "sonderzahlung_betrag": 100000,
+        "sonderzahlung_jahr": 0,
+        "sonderzahlung_betrag": 0,
         "regel_sonderzahlung_betrag": 0,
         "regel_sonderzahlung_turnus_jahre": 0,
-        "annual_withdrawal": 0,
+        "annual_withdrawal": 60000,
         "entnahme_plan": {},
         "entnahme_modus": "jährlich",
         "abgeltungssteuer_rate": 0.25,
         "soli_zuschlag_on_abgeltungssteuer": 0.055,
         "kirchensteuer_on_abgeltungssteuer": 0.0,
         "persoenlicher_steuersatz": 0.3,
-        "freistellungsauftrag_jahr": 0,
+        "freistellungsauftrag_jahr": 1000,
         "inflation_rate": 0.022,    #30 Jahre Historisch EZB
-        "inflation_volatility": 0.0118,
+        "inflation_volatility": 0.018,
         "freistellungs_pauschbetrag_anpassung_rate": 0.02,
         "start_date": datetime.date(2025, 1, 1) # Hier das Startdatum
     }
 
     #Annahmen für Marktentwicklung
     market_params = {
-        "annual_return": 0.06,
+        "annual_return": 0.08,
     }
 
     #Definition spezifischer Parameter für Depot/Versihcerung
@@ -884,11 +902,11 @@ def run_all_scenarios():
         label="Versicherung",
         ter=0.0045,
         serviceentgelt=0.0,
-        guthabenkosten=0.0021,
+        guthabenkosten=0.0019,
         abschlusskosten_einmalig_prozent=0.025,
         abschlusskosten_monatlich_prozent=0.025,
         verrechnungsdauer_monate=60,
-        verwaltungskosten_monatlich_prozent=0.084,
+        verwaltungskosten_monatlich_prozent=0.09,
         bewertungsdauer=22,
         death_year=None # hier None anstatt {}
     )
@@ -898,14 +916,14 @@ def run_all_scenarios():
         **basis_params,
         label="Depot DIY",
         ausgabeaufschlag=0.00,
-        monthly_ausgabeaufschlag=0.0035,
-        ruecknahmeabschlag=0.0035,
-        ter=0.018,
+        monthly_ausgabeaufschlag=0.00,
+        ruecknahmeabschlag=0.00,
+        ter=0.002,
         serviceentgelt=0.0,
         stueckkosten=0.0,
         teilfreistellung=0.3,
         basiszins=0.0255,
-        rebalancing_rate=0.1,
+        rebalancing_rate=0.05,
     )
     all_scenarios.append(params_depot_diy)
 
