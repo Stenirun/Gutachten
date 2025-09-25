@@ -11,19 +11,11 @@ import dataclasses
 from typing import List, Dict, Any, Optional
 import pyxirr
 import warnings
+import os
 
 # Unterdrückt RuntimeWarnings und FutureWarnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-# Import der Funktionen aus der Monte-Carlo-Datei
-from monte_carlo_simulator import (
-    load_and_analyze_data,
-    get_worst_3_years,
-    get_worst_3_years_from_simulations,
-    run_monte_carlo_simulation,
-    analyze_and_plot_results
-)
 
 # Eingangsparameter als Datenklasse
 @dataclasses.dataclass
@@ -109,6 +101,7 @@ class SparplanSimulator:
         self.cashflows = []
         self.cashflow_dates = []
         self.real_cashflows = []
+        self.start_date = params.start_date
 
         #monatlich kumulierte Kosten und Steuern
         self.ausgabeaufschlag_summe = 0
@@ -182,12 +175,12 @@ class SparplanSimulator:
         #Cashflows für XIRR Berechnung
         self.cashflows.append(-self.params.initial_investment)
         self.real_cashflows.append(-self.params.initial_investment)
-        self.cashflow_dates.append(datetime.date(2025, 1, 1))
+        self.cashflow_dates.append(self.start_date)
 
         #erster Portfolioeintrag
         if nettobetrag > 0:
             self.portfolio.append({
-                "date": datetime.date(2025, 1, 1),
+                "date": self.start_date,
                 "amount_invested": nettobetrag,
                 "value": nettobetrag,
                 "start_of_prev_year_value": nettobetrag,
@@ -195,8 +188,8 @@ class SparplanSimulator:
             })
 
     def _simuliere_monat(self, month: int): #simuliert Abläufe für jeden einzelnen Monat
-        current_date = datetime.date(2025, 1, 1) + relativedelta(months=month)
-        current_year = current_date.year - 2025
+        current_date = self.start_date + relativedelta(months=month)
+        current_year = current_date.year - self.start_date.year
 
         #überprüft ob Todesfall in dem Jahr eingetreten ist
         if self.params.death_year and current_year == self.params.death_year and not self.death_triggered:
@@ -208,7 +201,7 @@ class SparplanSimulator:
         if is_january:
             self.freistellungs_topf = self.params.freistellungsauftrag_jahr * (
                     1 + self.params.freistellungs_pauschbetrag_anpassung_rate) ** (
-                                              current_date.year - 2025)
+                                              current_date.year - self.start_date.year)
 
         self._handle_monthly_investment(month, current_date)
 
@@ -376,7 +369,7 @@ class SparplanSimulator:
             gesamtkosten_monatlich = 0.0
         return depotwert_brutto - gesamtkosten_monatlich
 
-    def _finalisiere_simulation(self): #Berechnung am Ende der Laufzeit für Besteuerung
+    def _finalisiere_simulation(self):  # Berechnung am Ende der Laufzeit für Besteuerung
         depotwert_final = sum(e["value"] for e in self.portfolio)
         depotwert_final_real = depotwert_final / self.kumulierte_inflation_factor
         restwert = depotwert_final
@@ -385,7 +378,7 @@ class SparplanSimulator:
         steuer = 0
         ruecknahmeabschlag_val = 0.0
         if restwert > 1e-9 and gewinn > 0 and not self.death_triggered:
-            #Besteuerung Versicherung mit Halbeinkünfteverfahren
+            # Besteuerung Versicherung mit Halbeinkünfteverfahren
             if self.params.versicherung_modus:
                 aktuelle_laufzeit = self.params.laufzeit
                 aktuelle_alter = self.params.eintrittsalter + aktuelle_laufzeit
@@ -393,7 +386,7 @@ class SparplanSimulator:
                     steuer = gewinn * 0.5 * self.params.persoenlicher_steuersatz
                 else:
                     steuer = gewinn * 0.85 * self.params.persoenlicher_steuersatz
-            #Besteuerung Depot mit Teilfreistellung/Freistellungsauftrag
+            # Besteuerung Depot mit Teilfreistellung/Freistellungsauftrag
             else:
                 teilfreistellung = getattr(self.params, "teilfreistellung", 0.0)
                 steuerbar = gewinn * (1 - teilfreistellung)
@@ -414,18 +407,19 @@ class SparplanSimulator:
             self.ruecknahmeabschlag_real_summe += ruecknahmeabschlag_val / self.kumulierte_inflation_factor
         restwert_net = restwert - steuer - ruecknahmeabschlag_val
 
-        #Finaler Auszahlungsbetrag zu Cashflow für Renditeberechnung
+        # Finaler Auszahlungsbetrag zu Cashflow für Renditeberechnung
         self.cashflows.append(restwert_net)
         self.real_cashflows.append(restwert_net / self.kumulierte_inflation_factor)
-        self.cashflow_dates.append(datetime.date(2025, 1, 1) + relativedelta(months=self.params.laufzeit * 12))
+        self.cashflow_dates.append(self.start_date + relativedelta(months=self.params.laufzeit * 12))
         self.kumulierte_entnahmen += restwert_net
         self.kumulierte_entnahmen_real += restwert_net / self.kumulierte_inflation_factor
 
-        #Letzter Log Eintrag für finalen Zustand
+        # Letzter Log Eintrag für finalen Zustand
         self.monatliche_kosten_logs.append({
-            "Datum": datetime.date(2025, 1, 1) + relativedelta(months=self.params.laufzeit * 12),
-            "Depotwert": depotwert_final,
-            "Depotwert real": depotwert_final_real,
+            "Datum": self.start_date + relativedelta(months=self.params.laufzeit * 12),
+            "Depotwert": restwert_net,  # *** HIER WURDE DIE KORREKTUR EINGEFÜHRT ***
+            "Depotwert real": restwert_net / self.kumulierte_inflation_factor,
+            # *** HIER WURDE DIE KORREKTUR EINGEFÜHRT ***
             "Ausgabeaufschlag kum": self.ausgabeaufschlag_summe,
             "Ausgabeaufschlag kum real": self.ausgabeaufschlag_real_summe,
             "Rücknahmeabschlag kum": self.ruecknahmeabschlag_summe,
@@ -545,7 +539,7 @@ class SparplanSimulator:
         entnahmebetrag_jahr = 0
 
         #bestimmt Entnahmebetrag aus Entnahmeplan
-        withdrawal_year = (current_date.year - datetime.date(2025, 1, 1).year) - self.params.beitragszahldauer + 1
+        withdrawal_year = (current_date.year - self.start_date.year) - self.params.beitragszahldauer + 1
         if self.params.entnahme_plan:
             sorted_years = sorted(self.params.entnahme_plan.keys(), reverse=True)
             for plan_year in sorted_years:
@@ -579,7 +573,7 @@ class SparplanSimulator:
             steuer = 0
             if self.params.versicherung_modus: #Besteuerung bei Entnahme Versicherung
                 aktuelle_laufzeit = (current_date - oldest_entry["date"]).days / 365.25
-                aktuelle_alter = self.params.eintrittsalter + (current_date - datetime.date(2025, 1, 1)).days / 365.25
+                aktuelle_alter = self.params.eintrittsalter + (current_date - self.start_date).days / 365.25
                 if aktuelle_alter >= 62 and aktuelle_laufzeit >= 12:
                     steuer = gewinn_anteil * 0.5 * self.params.persoenlicher_steuersatz
                 else:
@@ -626,8 +620,8 @@ def berechne_xirr_und_print(cashflows, cashflow_dates, real_cashflows, label): #
     try:
         xirr_nominal = pyxirr.xirr(cashflow_dates, cashflows)
         xirr_real = pyxirr.xirr(cashflow_dates, real_cashflows)
-        print(f"XIRR (nominal) für {label}: {xirr_nominal:,.2%}")
-        print(f"XIRR (real) für {label}: {xirr_real:,.2%}")
+        print(f"XIRR/effektive Jahresrendite nach Steuern und Kosten (nominal) für {label}: {xirr_nominal:,.2%}")
+        print(f"XIRR/effektive Jahresrendite nach Steuern und Kosten (real) für {label}: {xirr_real:,.2%}")
         return xirr_nominal, xirr_real
     except ValueError as e:
         print(f"Fehler bei der XIRR-Berechnung für {label}: {e}")
@@ -771,8 +765,7 @@ def exportiere_rebalancing_daten(rebalancing_log, label): #Export Rebalancing Da
         return df_rebal
     return None
 
-
-def erzeuge_report(df_kosten_det, df_rebal, xirr_nominal, xirr_real, mc_results, params, market_params): #erzeugt Report mit allen wichtigen Ergebnissen und Diagrammen
+def erzeuge_report(df_kosten_det, df_rebal, xirr_nominal, xirr_real, params, market_params): #erzeugt Report mit allen wichtigen Ergebnissen und Diagrammen
     xirr_nominal_formatted = f"{xirr_nominal:.2%}" if xirr_nominal is not None else "Berechnung fehlgeschlagen"
     xirr_real_formatted = f"{xirr_real:.2%}" if xirr_real is not None else "Berechnung fehlgeschlagen"
     end_beitragsdauer_index = min(params.beitragszahldauer - 1, len(df_kosten_det) - 1)
@@ -797,29 +790,21 @@ def erzeuge_report(df_kosten_det, df_rebal, xirr_nominal, xirr_real, mc_results,
 * **Finaler Depotwert am Ende der Laufzeit (real):** {df_kosten_det['Depotwert real'].iloc[-1]:,.2f} €
 * **Effektive Nettorendite (XIRR) nominal:** {xirr_nominal_formatted}
 * **Effektive Nettorendite (XIRR) real:** {xirr_real_formatted}
-### Monte-Carlo-Simulation (am Ende der Einzahlungsphase)
-* **Durchschnittlicher Endwert:** {mc_results["mean_value"]:,.2f} €
-* **Median Endwert:** {mc_results["median_value"]:,.2f} €
-* **95% Konfidenzintervall:** [{mc_results["ci_lower"]:,.2f} € - {mc_results["ci_upper"]:,.2f} €]
 ---
 ## Visualisierungen
 * **Vergleich der Depotentwicklung:** ![Vergleich der Depotentwicklung](vergleich_depotentwicklung.png)
 * **Kostenaufschlüsselung:** ![Kostenaufschlüsselung für {params.label}]({params.label}_kosten_aufschluesselung.png)
 * **Kumulierte Entnahmen:** ![Kumulierte Entnahmen für {params.label}]({params.label}_entnahmen_aufschluesselung.png)
-* **Monte-Carlo-Verteilung:** ![Monte-Carlo-Verteilung für {params.label}]({params.label}_monte_carlo_histogramm.png)
 ---
 ## Detailierte Kosten- und Rebalancing-Daten
 ### Jährliche Kostenaufschlüsselung
 {df_kosten_det.to_markdown(index=False)}
-### Rebalancing-Log (falls zutreffend)
-{df_rebal.to_markdown(index=False) if df_rebal is not None else "Keine Rebalancing-Vorgänge aufgezeichnet."}
 ---
     """
     md_filename = f"{params.label}_Report.md"
     with open(md_filename, "w") as f:
         f.write(report_text)
     print(f"Report für '{params.label}' in '{md_filename}' erstellt.")
-
 
 def plotten_vergleich(df_list, params_list): #Diagramm zum Vergleich Depotentwicklung in allen Szenarien
     plt.figure(figsize=(14, 8))
@@ -840,7 +825,6 @@ def plotten_vergleich(df_list, params_list): #Diagramm zum Vergleich Depotentwic
 
 # Hauptprogramm
 def run_all_scenarios():
-    import os
     output_path = "output/"
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -849,37 +833,34 @@ def run_all_scenarios():
 
     #Definition Basisparameter für alle Szenarien
     basis_params = {
-        "eintrittsalter": 35,
-        "initial_investment": 10000,
-        "monthly_investment": 400,
-        "laufzeit": 50,
-        "beitragszahldauer": 30,
+        "eintrittsalter": 45,
+        "initial_investment": 0,
+        "monthly_investment": 500,
+        "laufzeit": 40,
+        "beitragszahldauer": 22,
         "monthly_dynamik_rate": 0.00,
         "dynamik_turnus_monate": 12,
-        "sonderzahlung_jahr": 0,
-        "sonderzahlung_betrag": 0,
+        "sonderzahlung_jahr": 2,
+        "sonderzahlung_betrag": 100000,
         "regel_sonderzahlung_betrag": 0,
         "regel_sonderzahlung_turnus_jahre": 0,
-        "annual_withdrawal": 20000,
+        "annual_withdrawal": 0,
         "entnahme_plan": {},
         "entnahme_modus": "jährlich",
         "abgeltungssteuer_rate": 0.25,
         "soli_zuschlag_on_abgeltungssteuer": 0.055,
-        "kirchensteuer_on_abgeltungssteuer": 0.09,
+        "kirchensteuer_on_abgeltungssteuer": 0.0,
         "persoenlicher_steuersatz": 0.3,
         "freistellungsauftrag_jahr": 0,
-        "inflation_rate": 0.02,
-        "inflation_volatility": 0.01,
-        "freistellungs_pauschbetrag_anpassung_rate": 0.02
+        "inflation_rate": 0.022,    #30 Jahre Historisch EZB
+        "inflation_volatility": 0.0118,
+        "freistellungs_pauschbetrag_anpassung_rate": 0.02,
+        "start_date": datetime.date(2025, 1, 1) # Hier das Startdatum
     }
 
     #Annahmen für Marktentwicklung
     market_params = {
         "annual_return": 0.06,
-        "annual_volatility": 0.15,
-        "csv_file": "historische_daten.csv",
-        "date_column": "date",
-        "price_column": "price"
     }
 
     #Definition spezifischer Parameter für Depot/Versihcerung
@@ -891,10 +872,10 @@ def run_all_scenarios():
         ruecknahmeabschlag=0.002,
         ter=0.0045,
         serviceentgelt=0.0119,
-        stueckkosten=45,
+        stueckkosten=48,
         teilfreistellung=0.3,
         basiszins=0.0255,
-        rebalancing_rate=0.2,
+        rebalancing_rate=0.1,
     )
     all_scenarios.append(params_depot)
 
@@ -903,13 +884,13 @@ def run_all_scenarios():
         label="Versicherung",
         ter=0.0045,
         serviceentgelt=0.0,
-        guthabenkosten=0.0018,
+        guthabenkosten=0.0021,
         abschlusskosten_einmalig_prozent=0.025,
-        abschlusskosten_monatlich_prozent=0.0252,
+        abschlusskosten_monatlich_prozent=0.025,
         verrechnungsdauer_monate=60,
-        verwaltungskosten_monatlich_prozent=0.09,
-        bewertungsdauer=35,
-        death_year={}
+        verwaltungskosten_monatlich_prozent=0.084,
+        bewertungsdauer=22,
+        death_year=None # hier None anstatt {}
     )
     all_scenarios.append(params_versicherung)
 
@@ -924,184 +905,38 @@ def run_all_scenarios():
         stueckkosten=0.0,
         teilfreistellung=0.3,
         basiszins=0.0255,
-        rebalancing_rate=0.2,
+        rebalancing_rate=0.1,
     )
     all_scenarios.append(params_depot_diy)
 
     df_results_all = []
 
-    try:
-        # Lade und analysiere historische Daten für Monte Carlo Sim
-        monthly_returns_hist, mean_monthly_return, std_dev_monthly_return = load_and_analyze_data(
-            market_params["csv_file"],
-            market_params["date_column"],
-            market_params["price_column"],
-            basis_params["inflation_rate"]
+    for params in all_scenarios:
+        print(f"\n--- Simulation für {params.label} gestartet ---")
+
+        # 1. Deterministische Simulation ausführen mit fester Rendite
+        simulator = SparplanSimulator(params, annual_return=market_params["annual_return"])
+        df_monatlich_log, rebalancing_log, cashflows, cashflow_dates, real_cashflows = simulator.run_simulation()
+
+        # 2. Ergebnisse der deterministischen Simulation verarbeiten
+        xirr_nominal, xirr_real = berechne_xirr_und_print(cashflows, cashflow_dates, real_cashflows, params.label)
+        df_results_all.append(df_monatlich_log)
+        df_kosten_jaehrlich = auswerten_kosten(df_monatlich_log.copy(), params, params.label)
+        rebal_df = exportiere_rebalancing_daten(rebalancing_log, params.label)
+        plotten_kosten(df_kosten_jaehrlich, params)
+        plotten_entnahmen(df_kosten_jaehrlich, params)
+
+        # 3. Report und Plots erstellen
+        erzeuge_report(
+            df_kosten_jaehrlich, rebal_df, xirr_nominal, xirr_real,
+            params,
+            market_params
         )
-        for params in all_scenarios:
-            print(f"\n--- Simulation für {params.label} gestartet ---")
 
-            # 1. Deterministische Simulation ausführen mit fester Rendite
-            simulator = SparplanSimulator(params, annual_return=market_params["annual_return"])
-            df_monatlich_log, rebalancing_log, cashflows, cashflow_dates, real_cashflows = simulator.run_simulation()
+        print(f"--- Simulation für {params.label} beendet ---")
 
-            # 2. Ergebnisse der deterministischen Simulation verarbeiten
-            xirr_nominal, xirr_real = berechne_xirr_und_print(cashflows, cashflow_dates, real_cashflows, params.label)
-            df_results_all.append(df_monatlich_log)
-            df_kosten_jaehrlich = auswerten_kosten(df_monatlich_log.copy(), params, params.label)
-            rebal_df = exportiere_rebalancing_daten(rebalancing_log, params.label)
-            plotten_kosten(df_kosten_jaehrlich, params)
-            plotten_entnahmen(df_kosten_jaehrlich, params)
-            '''
-            # 3. Monte-Carlo-Simulation (Normal-Szenario) ausführen und analysieren
-            num_simulations_normal = 1
-            mc_results_normal, final_values_normal, annual_returns_normal, max_drawdowns_normal = run_monte_carlo_simulation(
-                mean_monthly_return,
-                std_dev_monthly_return,
-                params.initial_investment,
-                params.laufzeit,
-                num_simulations_normal,
-                monthly_investment=params.monthly_investment,
-                monthly_dynamik_rate=params.monthly_dynamik_rate,
-                dynamik_turnus_monate=params.dynamik_turnus_monate,
-                beitragszahldauer_monate=params.beitragszahldauer * 12
-            )
-
-            # 4. Report und Plots erstellen
-            erzeuge_report(
-                df_kosten_jaehrlich, rebal_df, xirr_nominal, xirr_real,
-                {"mean_value": np.mean(final_values_normal[params.laufzeit]),
-                 "median_value": np.median(final_values_normal[params.laufzeit]),
-                 "ci_lower": np.percentile(final_values_normal[params.laufzeit], 2.5),
-                 "ci_upper": np.percentile(final_values_normal[params.laufzeit], 97.5)},
-                params,
-                market_params
-            )
-            analyze_and_plot_results(
-                mc_results_normal, final_values_normal, annual_returns_normal, max_drawdowns_normal,
-                f"Normales Szenario: {params.label}", params.laufzeit, params.initial_investment, num_simulations_normal
-            )'''
-            print(f"--- Simulation für {params.label} beendet ---")
-
-        # Vergleichsplots für alle Szenarien
-        plotten_vergleich(df_results_all, all_scenarios)
-        '''
-        # === ERWEITERTE WORST-CASE-ANALYSE FÜR ALLE SZENARIEN ===
-        print("\n=== Erweiterte Monte-Carlo-Szenarien ===")
-
-        # Historische Worst-Case-Daten einmalig laden und Details ausgeben
-        worst_returns_historical, worst_historical_start_year, worst_historical_return = get_worst_3_years(
-            monthly_returns_hist)
-        print(
-            f"Der historisch schlechteste 3-Jahres-Zeitraum war {worst_historical_start_year}-{worst_historical_start_year + 2} mit einer kumulierten Rendite von {worst_historical_return:.2%}.")
-        print("-" * 50)
-
-        num_simulations_worst_case = 1
-
-        for params in all_scenarios:
-            print(f"\n--- Worst-Case-Analyse für {params.label} gestartet ---")
-
-            # Führe eine erste MC-Simulation im normalen Szenario aus, um die Pfade zu generieren
-            mc_results_normal, _, _, _ = run_monte_carlo_simulation(
-                mean_monthly_return,
-                std_dev_monthly_return,
-                params.initial_investment,
-                params.laufzeit,
-                num_simulations_worst_case,
-                monthly_investment=params.monthly_investment,
-                monthly_dynamik_rate=params.monthly_dynamik_rate,
-                dynamik_turnus_monate=params.dynamik_turnus_monate,
-                beitragszahldauer_monate=params.beitragszahldauer * 12
-            )
-
-            # Extrahieren des schlechtesten simulierten Pfads aus den Ergebnissen der normalen MC-Simulation
-            worst_returns_simulated, worst_simulated_return = get_worst_3_years_from_simulations(mc_results_normal,
-                                                                                                 params.laufzeit)
-            print(
-                f"Der schlechteste simulierte 3-Jahres-Zeitraum hatte eine kumulierte Rendite von {worst_simulated_return:.2%}.")
-            print("-" * 50)
-
-            # 1. Historisches Worst-Case-Szenario am Anfang
-            print("--- Simulation: Worst-Case (Historisch) am Anfang ---")
-            mc_results_hist_start, final_values_hist_start, annual_returns_hist_start, max_drawdowns_hist_start = run_monte_carlo_simulation(
-                mean_monthly_return, std_dev_monthly_return, params.initial_investment, params.laufzeit,
-                num_simulations_worst_case, scenario='start', worst_returns=worst_returns_historical,
-                monthly_investment=params.monthly_investment,
-                monthly_dynamik_rate=params.monthly_dynamik_rate,
-                dynamik_turnus_monate=params.dynamik_turnus_monate,
-                beitragszahldauer_monate=params.beitragszahldauer * 12
-            )
-            analyze_and_plot_results(
-                mc_results_hist_start, final_values_hist_start, annual_returns_hist_start, max_drawdowns_hist_start,
-                f"Worst-Case (Historisch) am Anfang: {params.label}", params.laufzeit, params.initial_investment,
-                num_simulations_worst_case
-            )
-
-            # 2. Historisches Worst-Case-Szenario zu Beginn der Entnahmephase
-            print("--- Simulation: Worst-Case (Historisch) bei Entnahme ---")
-            mc_results_hist_withdrawal, final_values_hist_withdrawal, annual_returns_hist_withdrawal, max_drawdowns_hist_withdrawal = run_monte_carlo_simulation(
-                mean_monthly_return, std_dev_monthly_return, params.initial_investment, params.laufzeit,
-                num_simulations_worst_case, scenario='withdrawal', worst_returns=worst_returns_historical,
-                monthly_investment=params.monthly_investment,
-                monthly_dynamik_rate=params.monthly_dynamik_rate,
-                dynamik_turnus_monate=params.dynamik_turnus_monate,
-                beitragszahldauer_monate=params.beitragszahldauer * 12
-            )
-            analyze_and_plot_results(
-                mc_results_hist_withdrawal, final_values_hist_withdrawal, annual_returns_hist_withdrawal,
-                max_drawdowns_hist_withdrawal,
-                f"Worst-Case (Historisch) bei Entnahme: {params.label}", params.laufzeit, params.initial_investment,
-                num_simulations_worst_case
-            )
-
-            # 3. Simuliertes Worst-Case-Szenario am Anfang
-            print("--- Simulation: Worst-Case (Simuliert) am Anfang ---")
-            mc_results_sim_start, final_values_sim_start, annual_returns_sim_start, max_drawdowns_sim_start = run_monte_carlo_simulation(
-                mean_monthly_return, std_dev_monthly_return, params.initial_investment, params.laufzeit,
-                num_simulations_worst_case, scenario='start', worst_returns=worst_returns_simulated,
-                monthly_investment=params.monthly_investment,
-                monthly_dynamik_rate=params.monthly_dynamik_rate,
-                dynamik_turnus_monate=params.dynamik_turnus_monate,
-                beitragszahldauer_monate=params.beitragszahldauer * 12
-            )
-            analyze_and_plot_results(
-                mc_results_sim_start, final_values_sim_start, annual_returns_sim_start, max_drawdowns_sim_start,
-                f"Worst-Case (Simuliert) am Anfang: {params.label}", params.laufzeit, params.initial_investment,
-                num_simulations_worst_case
-            )
-
-            # 4. Simuliertes Worst-Case-Szenario zu Beginn der Entnahmephase
-            print("--- Simulation: Worst-Case (Simuliert) bei Entnahme ---")
-            mc_results_sim_withdrawal, final_values_sim_withdrawal, annual_returns_sim_withdrawal, max_drawdowns_sim_withdrawal = run_monte_carlo_simulation(
-                mean_monthly_return, std_dev_monthly_return, params.initial_investment, params.laufzeit,
-                num_simulations_worst_case, scenario='withdrawal', worst_returns=worst_returns_simulated,
-                monthly_investment=params.monthly_investment,
-                monthly_dynamik_rate=params.monthly_dynamik_rate,
-                dynamik_turnus_monate=params.dynamik_turnus_monate,
-                beitragszahldauer_monate=params.beitragszahldauer * 12
-            )
-            analyze_and_plot_results(
-                mc_results_sim_withdrawal, final_values_sim_withdrawal, annual_returns_sim_withdrawal,
-                max_drawdowns_sim_withdrawal,
-                f"Worst-Case (Simuliert) bei Entnahme: {params.label}", params.laufzeit, params.initial_investment,
-                num_simulations_worst_case
-            )
-
-            print(f"--- Worst-Case-Analyse für {params.label} beendet ---")
-        '''
-    except FileNotFoundError as e:
-        print(
-            f"Fehler: {e}. Bitte stellen Sie sicher, dass die Datei '{market_params['csv_file']}' im selben Verzeichnis liegt.")
-    except Exception as e:
-        print(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
+    # Vergleichsplots für alle Szenarien
+    plotten_vergleich(df_results_all, all_scenarios)
 
 if __name__ == "__main__":
     run_all_scenarios()
-'''
-#meresults die montecarlo sim rechnet ohne entnahmen sondern einzahlung über komplette laufzeit
-#Report erste seite eingabeparameter wie bei gutachten
-# Eingabeparameter auch die Initialeinzahlung und entnahme und entnahmezeitpunkt, montecarlo mit zeitpunkten da rein und worst case
-#rebalancing muss nicht rein in den report
-inflation könnte aus historischen daten simuliert werden und nicht 2% mit volatilität
-startdatum als eingangsvariable und nicht als magische zahl
-'''
